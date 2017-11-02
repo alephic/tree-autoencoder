@@ -1,7 +1,7 @@
 
 import torch
 from torch.autograd import Variable
-from nn_util import ResLayer, StraightThrough, decide
+from nn_util import ResLayer, straight_through, decide, distribute
 
 class ShiftReduceEncoder(torch.nn.Module):
     def __init__(self, **config):
@@ -68,8 +68,11 @@ class ShiftReduceEncoder(torch.nn.Module):
                 # shifted.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
                 # state_stack[-1] = h, c : (num_layers, batch_size=1, lstm_size)
                 _, new_state = self.lstm(shifted.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
-                stack.append(shifted)
-                state_stack.append(new_state)
+                stack.append(straight_through(act_score, shifted))
+                state_stack.append((
+                    straight_through(act_score, new_state[0]),
+                    straight_through(act_score, new_state[1])
+                ))
             elif act_idx == 1: # reduce
                 prev_enc_r = stack.pop()
                 prev_state_r = state_stack.pop()
@@ -85,8 +88,11 @@ class ShiftReduceEncoder(torch.nn.Module):
                 ) # (batch_size=1, enc_size)
                 # reduced.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
                 _, new_state = self.lstm(reduced.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
-                stack.append(reduced)
-                state_stack.append(new_state)
+                stack.append(straight_through(act_score, reduced))
+                state_stack.append((
+                    straight_through(act_score, new_state[0]),
+                    straight_through(act_score, new_state[1])
+                ))
 
 class ShiftReduceDecoder(torch.nn.Module):
     def __init__(self, **config):
@@ -152,7 +158,7 @@ class ShiftReduceDecoder(torch.nn.Module):
             if act_idx == 0: # unshift
                 unshifted = stack.pop() # (batch_size=1, enc_size)
                 state_stack.pop() # h, c : (num_layers, batch_size=1, lstm_size)
-                buffer_slices.append(unshifted)
+                buffer_slices.append(straight_through(act_score, unshifted))
                 if len(stack) == 0:
                     # torch.stack(buffer_slices, 1) -> (batch_size=1, buffer_size, enc_size)
                     # torch.stack(action_logit_record, 1) -> (batch_size=1, len(action_record), 2)
@@ -170,7 +176,13 @@ class ShiftReduceDecoder(torch.nn.Module):
                 # prev_{h, c}.expand(-1, 2, -1) -> (num_layers, batch_size=2, lstm_size)
                 _, new_states = self.lstm(torch.cat((unreduced_l, unreduced_r), 0), (prev_h.expand(-1, 2, -1), prev_c.expand(-1, 2, -1)))
                 new_state_l, new_state_r = torch.chunk(new_states, 2, 1) # (num_layers, batch_size=1, lstm_size)
-                stack.append(unreduced_l)
-                stack.append(unreduced_r)
-                state_stack.append(new_state_l)
-                state_stack.append(new_state_r)
+                stack.append(straight_through(act_score, unreduced_l))
+                stack.append(straight_through(act_score, unreduced_r))
+                state_stack.append((
+                    straight_through(act_score, new_state_l[0]),
+                    straight_through(act_score, new_state_l[1])
+                ))
+                state_stack.append((
+                    straight_through(act_score, new_state_r[0]),
+                    straight_through(act_score, new_state_r[1])
+                ))
