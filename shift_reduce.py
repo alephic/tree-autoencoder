@@ -36,7 +36,7 @@ class ShiftReduceEncoder(torch.nn.Module):
             ResLayer(enc_size)
         )
     
-    def forward(self, input_indices):
+    def forward(self, input_indices, fixed_actions=None):
         buffer = self.embed(input_indices) # (batch_size=1, buffer_size, enc_size)
         buffer_index = 0
         buffer_size = buffer.size(1)
@@ -113,6 +113,8 @@ class ShiftReduceDecoder(torch.nn.Module):
         )
         self.h0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
         self.c0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
+        self.register_buffer('act_unshift', Variable(torch.Tensor([1.0, 0.0]), requires_grad=False))
+        self.register_buffer('act_unreduce', Variable(torch.Tensor([0.0, 1.0]), requires_grad=False))
         self.act_scorer = torch.nn.Linear(
             lstm_size,
             2
@@ -131,4 +133,5 @@ class ShiftReduceDecoder(torch.nn.Module):
             ),
             ResLayer(enc_size)
         )
-    def forward()
+    def forward(self, input_encoding, fixed_actions=None, buffer_length=None):
+        pass
