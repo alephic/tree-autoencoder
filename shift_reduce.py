@@ -22,25 +22,23 @@ class ShiftReduceEncoder(torch.nn.Module):
         )
         self.h0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
         self.c0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
-        self.register_buffer('act_shift', Variable(torch.Tensor([1.0, 0.0]), requires_grad=False))
-        self.register_buffer('act_reduce', Variable(torch.Tensor([0.0, 1.0]), requires_grad=False))
         self.act_scorer = torch.nn.Linear(
             lstm_size,
             2
         )
         self.reduce = torch.nn.Sequential(
             torch.nn.Linear(
-                2*(enc_size + lstm_layers*lstm_size),
+                2*(enc_size + lstm_size),
                 enc_size
             ),
             ResLayer(enc_size)
         )
-    
+
     def forward(self, input_indices, fixed_actions=None):
         buffer = self.embed(input_indices) # (batch_size=1, buffer_size, enc_size)
         buffer_index = 0
         buffer_size = buffer.size(1)
-        stack = [] # [((h, c), enc)]
+        stack = []
         state_stack = [(self.h0.unsqueeze(1), self.c0.unsqueeze(1))]
         action_record = []
         action_logit_record = []
@@ -52,7 +50,9 @@ class ShiftReduceEncoder(torch.nn.Module):
                 if force is None: # there's enough stack to reduce
                     force = 1 # force reduce
                 else: # can't shift or reduce, we're done
-                    return stack[0][1], action_record, torch.stack(action_logit_record, 1) # return final encoding
+                    return stack[0], action_record, torch.stack(action_logit_record, 1) # return final encoding
+            if force is None and fixed_actions is not None:
+                force = fixed_actions[len(action_record)]
             act_logits = self.act_scorer(state_stack[-1][0][-1])
             act_idx, act_score = decide(act_logits, force=force)
             action_record.append(act_idx)
@@ -60,42 +60,24 @@ class ShiftReduceEncoder(torch.nn.Module):
             if act_idx == 0: # shift
                 shifted = buffer[:, buffer_index]
                 buffer_index += 1
-                _, new_state = self.lstm(
-                    StraightThrough()(
-                        act_score,
-                        torch.cat((
-                            shifted,
-                            self.act_shift
-                        ), 1)
-                    ).unsqueeze(1),
-                    state_stack[-1]
-                )
-                stack.append(StraightThrough()(act_score, shifted))
+                _, new_state = self.lstm(shifted.unsqueeze(1), state_stack[-1])
+                stack.append(shifted)
                 state_stack.append(new_state)
             elif act_idx == 1: # reduce
-                prev_state_r = state_stack.pop()
                 prev_enc_r = stack.pop()
-                prev_state_l = state_stack.pop()
+                prev_state_r = state_stack.pop()
                 prev_enc_l = stack.pop()
+                prev_state_l = state_stack.pop()
                 reduced = self.reduce(
                     torch.cat((
-                        prev_state_r[-1],
                         prev_enc_r,
-                        prev_state_l[-1],
+                        prev_state_r[0][-1],
                         prev_enc_l
+                        prev_state_l[0][-1],
                     ), 1)
                 )
-                _, new_state = self.lstm(
-                    StraightThrough()(
-                        act_score,
-                        torch.cat((
-                            reduced,
-                            self.act_reduce
-                        ), 1)
-                    ).unsqueeze(1),
-                    state_stack[-1]
-                )
-                stack.append(StraightThrough()(act_score, reduced))
+                _, new_state = self.lstm(reduced.unsqueeze(1), state_stack[-1])
+                stack.append(reduced)
                 state_stack.append(new_state)
 
 class ShiftReduceDecoder(torch.nn.Module):
@@ -113,8 +95,6 @@ class ShiftReduceDecoder(torch.nn.Module):
         )
         self.h0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
         self.c0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
-        self.register_buffer('act_unshift', Variable(torch.Tensor([1.0, 0.0]), requires_grad=False))
-        self.register_buffer('act_unreduce', Variable(torch.Tensor([0.0, 1.0]), requires_grad=False))
         self.act_scorer = torch.nn.Linear(
             lstm_size,
             2
@@ -133,5 +113,47 @@ class ShiftReduceDecoder(torch.nn.Module):
             ),
             ResLayer(enc_size)
         )
-    def forward(self, input_encoding, fixed_actions=None, buffer_length=None):
-        pass
+
+    def forward(self, input_encoding, buffer_length=None, fixed_actions=None):
+        buffer_slices = []
+        stack = [input_encoding]
+        _, init_state = self.lstm(input_encoding.unsqueeze(1), (self.h0.unsqueeze(1), self.c0.unsqueeze(1)))
+        state_stack = [init_state]
+        action_record = []
+        action_logit_record = []
+        while True:
+            force = None
+            if buffer_length is not None:
+                if len(stack) == 1 and len(buffer_slices) + 1 < buffer_length:
+                    # unshifting the last remaning token would result in too small of a buffer
+                    force = 1 # force unreduce
+                elif len(stack) + len(buffer_slices) == buffer_length:
+                    # unreducing any more would generate too large of a buffer
+                    force = 0 # force unshift
+            if force is None and fixed_actions is not None:
+                force = fixed_actions[len(action_record)]
+            act_logits = self.act_scorer(state_stack[-1][0][-1])
+            act_idx, act_score = decide(act_logits, force=force)
+            action_record.append(act_idx)
+            action_logit_record.append(act_logits)
+            if act_idx == 0: # unshift
+                unshifted = stack.pop()
+                state_stack.pop()
+                buffer_slices.append(unshifted)
+                if len(stack) == 0:
+                    return torch.stack(buffer_slices, 1), action_record, torch.stack(action_logit_record, 1)
+            elif act_idx == 1: # unreduce
+                prev_enc = stack.pop()
+                prev_h, prev_c = state_stack.pop()
+                unreduce_in = torch.cat((
+                    prev_enc,
+                    prev_h[-1]
+                ), 1)
+                unreduced_l = self.unreduce_l(unreduce_in)
+                unreduced_r = self.unreduce_r(unreduce_in)
+                _, new_states = self.lstm(torch.cat((unreduced_l, unreduced_r), 0), (prev_h.expand(-1, 2, -1), prev_c.expand(-1, 2, -1)))
+                new_state_l, new_state_r = torch.chunk(new_states, 2, 1)
+                stack.append(unreduced_l)
+                stack.append(unreduced_r)
+                state_stack.append(new_state_l)
+                state_stack.append(new_state_r)
