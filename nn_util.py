@@ -8,6 +8,9 @@ class ResLayer(torch.nn.Module):
     def forward(self, x):
         return self.linear(self.activation(x)) + x
 
+# Acts like identity function on forward pass (ignores score),
+# then on backward pass, behaves as though score was used to weight x
+# (gradient matches x -> positive score gradient, gradient mismatches x -> negative score gradient)
 class StraightThrough(torch.autograd.Function):
     def forward(self, score, x):
         self.save_for_backward(score, x)
