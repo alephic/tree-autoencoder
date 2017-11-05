@@ -15,7 +15,7 @@ class ShiftReduceEncoder(torch.nn.Module):
         lstm_size = config.get('lstm_size', 256)
         lstm_layers = config.get('lstm_layers', 2)
         self.lstm = torch.nn.LSTM(
-            enc_size + 2, # 2d one-hot encoding of action
+            enc_size,
             lstm_size,
             lstm_layers,
             batch_first=True
