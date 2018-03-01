@@ -1,7 +1,7 @@
 
 import torch
 from torch.autograd import Variable
-from nn_util import ResLayer, straight_through, decide, distribute
+from nn_util import ResLayer, straight_through, decide
 
 class ShiftReduceEncoder(torch.nn.Module):
     def __init__(self, **config):
