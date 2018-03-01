@@ -2,6 +2,7 @@
 import torch
 from torch.autograd import Variable
 from nn_util import ResLayer, straight_through, decide
+from collections import deque
 
 class Encoder(torch.nn.Module):
     def __init__(self, **config):
@@ -24,7 +25,7 @@ class Encoder(torch.nn.Module):
         )
         self.reduce = torch.nn.Sequential(
             torch.nn.Linear(
-                2*(self.enc_size + lstm_size),
+                2*self.enc_size,
                 self.enc_size
             ),
             ResLayer(self.enc_size)
@@ -77,10 +78,8 @@ class Encoder(torch.nn.Module):
                 reduced = self.reduce(
                     torch.cat((
                         prev_enc_r, # (batch_size=1, enc_size)
-                        prev_state_r[0][-1], # (batch_size=1, lstm_size)
-                        prev_enc_l,
-                        prev_state_l[0][-1]
-                    ), 1) # (batch_size=1, 2*(enc_size + lstm-size))
+                        prev_enc_l
+                    ), 1) # (batch_size=1, 2*enc_size)
                 ) # (batch_size=1, enc_size)
                 # reduced.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
                 _, new_state = self.lstm(reduced.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
@@ -95,32 +94,19 @@ class Decoder(torch.nn.Module):
         super().__init__()
         self.config = config
         self.enc_size = config.get('enc_size', 256)
-        lstm_size = config.get('lstm_size', 256)
-        lstm_layers = config.get('lstm_layers', 2)
-        self.lstm = torch.nn.LSTM(
-            self.enc_size,
-            lstm_size,
-            lstm_layers,
-            batch_first=True
-        )
-        self.h0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
-        self.c0 = torch.nn.Parameter(torch.Tensor(lstm_layers, lstm_size).zero_())
-        self.act_scorer = torch.nn.Linear(
-            lstm_size,
-            2
+        self.act_scorer = torch.nn.Sequential(
+            ResLayer(self.enc_size),
+            torch.nn.Linear(
+                self.enc_size,
+                2
+            )
         )
         self.unreduce_l = torch.nn.Sequential(
-            torch.nn.Linear(
-                self.enc_size + lstm_size,
-                self.enc_size
-            ),
+            ResLayer(self.enc_size),
             ResLayer(self.enc_size)
         )
         self.unreduce_r = torch.nn.Sequential(
-            torch.nn.Linear(
-                self.enc_size + lstm_size,
-                self.enc_size
-            ),
+            ResLayer(self.enc_size),
             ResLayer(self.enc_size)
         )
 
@@ -128,10 +114,6 @@ class Decoder(torch.nn.Module):
         # input_encoding : (batch_size=1, enc_size)
         buffer_slices = []
         stack = [input_encoding]
-        # unsqueeze input_encoding -> (batch_size=1, seq_length=1, enc_size)
-        # unsqueeze h0, c0 -> (num_layers, batch_size=1, lstm_size)
-        _, init_state = self.lstm(input_encoding.unsqueeze(1), (self.h0.unsqueeze(1), self.c0.unsqueeze(1)))
-        state_stack = [init_state]
         action_record = []
         action_logit_record = []
         while True:
@@ -147,13 +129,12 @@ class Decoder(torch.nn.Module):
                 force = fixed_actions[len(action_record)]
             # state_stack[-1][0] = h : (num_layers, batch_size=1, lstm_size)
             # state_stack[-1][0][-1] : (batch_size=1, lstm_size)
-            act_logits = self.act_scorer(state_stack[-1][0][-1]) # (batch_size=1, 2)
+            act_logits = self.act_scorer(stack[-1]) # (batch_size=1, 2)
             act_idx, act_score = decide(act_logits, force=force)
             action_record.append(act_idx)
             action_logit_record.append(act_logits)
             if act_idx == 0: # unshift
                 unshifted = stack.pop() # (batch_size=1, enc_size)
-                state_stack.pop() # h, c : (num_layers, batch_size=1, lstm_size)
                 buffer_slices.append(straight_through(act_score, unshifted))
                 if len(stack) == 0:
                     # torch.stack(buffer_slices, 1) -> (batch_size=1, buffer_size, enc_size)
@@ -161,25 +142,7 @@ class Decoder(torch.nn.Module):
                     return torch.stack(buffer_slices, 1), action_record, torch.stack(action_logit_record, 1)
             elif act_idx == 1: # unreduce
                 prev_enc = stack.pop() # (batch_size=1, enc_size)
-                prev_h, prev_c = state_stack.pop() # (num_layers, batch_size=1, lstm_size)
-                unreduce_in = torch.cat((
-                    prev_enc,
-                    prev_h[-1]
-                ), 1) # (batch_size=1, enc_size + lstm_size)
-                unreduced_l = self.unreduce_l(unreduce_in) # (batch_size=1, enc_size)
-                unreduced_r = self.unreduce_r(unreduce_in) # (batch_size=1, enc_size)
-                # torch.cat((unreduced_l, unreduced_r), 0) -> (batch_size=2, enc_size)
-                # prev_{h, c}.expand(-1, 2, -1) -> (num_layers, batch_size=2, lstm_size)
-                _, new_states = self.lstm(torch.cat((unreduced_l, unreduced_r), 0).unsqueeze(1), (prev_h.expand(-1, 2, -1), prev_c.expand(-1, 2, -1)))
-                new_h_l, new_h_r = torch.chunk(new_states[0], 2, 1) # (num_layers, batch_size=1, lstm_size)
-                new_c_l, new_c_r = torch.chunk(new_states[1], 2, 1) # (num_layers, batch_size=1, lstm_size)
+                unreduced_l = self.unreduce_l(prev_enc) # (batch_size=1, enc_size)
+                unreduced_r = self.unreduce_r(prev_enc) # (batch_size=1, enc_size)
                 stack.append(straight_through(act_score, unreduced_l))
                 stack.append(straight_through(act_score, unreduced_r))
-                state_stack.append((
-                    straight_through(act_score, new_h_l),
-                    straight_through(act_score, new_c_l)
-                ))
-                state_stack.append((
-                    straight_through(act_score, new_h_r),
-                    straight_through(act_score, new_c_r)
-                ))
