@@ -5,17 +5,13 @@ from nn_util import ResLayer, straight_through, decide, distribute
 
 class ShiftReduceEncoder(torch.nn.Module):
     def __init__(self, **config):
+        super().__init__()
         self.config = config
-        enc_size = config.get('enc_size', 256)
-        vocab_size = config['vocab_size']
-        self.embed = torch.nn.Embedding(
-            vocab_size,
-            enc_size
-        )
+        self.enc_size = config.get('enc_size', 256)
         lstm_size = config.get('lstm_size', 256)
         lstm_layers = config.get('lstm_layers', 2)
         self.lstm = torch.nn.LSTM(
-            enc_size + 2, # 2d one-hot encoding of action
+            self.enc_size,
             lstm_size,
             lstm_layers,
             batch_first=True
@@ -28,14 +24,14 @@ class ShiftReduceEncoder(torch.nn.Module):
         )
         self.reduce = torch.nn.Sequential(
             torch.nn.Linear(
-                2*(enc_size + lstm_size),
-                enc_size
+                2*(self.enc_size + lstm_size),
+                self.enc_size
             ),
-            ResLayer(enc_size)
+            ResLayer(self.enc_size)
         )
 
-    def forward(self, input_indices, fixed_actions=None):
-        buffer = self.embed(input_indices) # (batch_size=1, buffer_size, enc_size)
+    def forward(self, buffer, fixed_actions=None):
+        # buffer : (batch_size=1, buffer_size, enc_size)
         buffer_index = 0
         buffer_size = buffer.size(1)
         stack = []
@@ -82,8 +78,8 @@ class ShiftReduceEncoder(torch.nn.Module):
                     torch.cat((
                         prev_enc_r, # (batch_size=1, enc_size)
                         prev_state_r[0][-1], # (batch_size=1, lstm_size)
-                        prev_enc_l
-                        prev_state_l[0][-1],
+                        prev_enc_l,
+                        prev_state_l[0][-1]
                     ), 1) # (batch_size=1, 2*(enc_size + lstm-size))
                 ) # (batch_size=1, enc_size)
                 # reduced.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
@@ -96,13 +92,13 @@ class ShiftReduceEncoder(torch.nn.Module):
 
 class ShiftReduceDecoder(torch.nn.Module):
     def __init__(self, **config):
+        super().__init__()
         self.config = config
-        enc_size = config.get('enc_size', 256)
-        vocab_size = config['vocab_size']
+        self.enc_size = config.get('enc_size', 256)
         lstm_size = config.get('lstm_size', 256)
         lstm_layers = config.get('lstm_layers', 2)
         self.lstm = torch.nn.LSTM(
-            enc_size,
+            self.enc_size,
             lstm_size,
             lstm_layers,
             batch_first=True
@@ -115,17 +111,17 @@ class ShiftReduceDecoder(torch.nn.Module):
         )
         self.unreduce_l = torch.nn.Sequential(
             torch.nn.Linear(
-                enc_size + lstm_size,
-                enc_size
+                self.enc_size + lstm_size,
+                self.enc_size
             ),
-            ResLayer(enc_size)
+            ResLayer(self.enc_size)
         )
         self.unreduce_r = torch.nn.Sequential(
             torch.nn.Linear(
-                enc_size + lstm_size,
-                enc_size
+                self.enc_size + lstm_size,
+                self.enc_size
             ),
-            ResLayer(enc_size)
+            ResLayer(self.enc_size)
         )
 
     def forward(self, input_encoding, buffer_length=None, fixed_actions=None):
@@ -174,15 +170,16 @@ class ShiftReduceDecoder(torch.nn.Module):
                 unreduced_r = self.unreduce_r(unreduce_in) # (batch_size=1, enc_size)
                 # torch.cat((unreduced_l, unreduced_r), 0) -> (batch_size=2, enc_size)
                 # prev_{h, c}.expand(-1, 2, -1) -> (num_layers, batch_size=2, lstm_size)
-                _, new_states = self.lstm(torch.cat((unreduced_l, unreduced_r), 0), (prev_h.expand(-1, 2, -1), prev_c.expand(-1, 2, -1)))
-                new_state_l, new_state_r = torch.chunk(new_states, 2, 1) # (num_layers, batch_size=1, lstm_size)
+                _, new_states = self.lstm(torch.cat((unreduced_l, unreduced_r), 0).unsqueeze(1), (prev_h.expand(-1, 2, -1), prev_c.expand(-1, 2, -1)))
+                new_h_l, new_h_r = torch.chunk(new_states[0], 2, 1) # (num_layers, batch_size=1, lstm_size)
+                new_c_l, new_c_r = torch.chunk(new_states[1], 2, 1) # (num_layers, batch_size=1, lstm_size)
                 stack.append(straight_through(act_score, unreduced_l))
                 stack.append(straight_through(act_score, unreduced_r))
                 state_stack.append((
-                    straight_through(act_score, new_state_l[0]),
-                    straight_through(act_score, new_state_l[1])
+                    straight_through(act_score, new_h_l),
+                    straight_through(act_score, new_c_l)
                 ))
                 state_stack.append((
-                    straight_through(act_score, new_state_r[0]),
-                    straight_through(act_score, new_state_r[1])
+                    straight_through(act_score, new_h_r),
+                    straight_through(act_score, new_c_r)
                 ))
