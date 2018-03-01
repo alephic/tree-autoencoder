@@ -3,7 +3,7 @@ import torch
 from torch.autograd import Variable
 from nn_util import ResLayer, straight_through, decide
 
-class ShiftReduceEncoder(torch.nn.Module):
+class LSTMShiftReduceEncoder(torch.nn.Module):
     def __init__(self, **config):
         super().__init__()
         self.config = config
@@ -90,7 +90,7 @@ class ShiftReduceEncoder(torch.nn.Module):
                     straight_through(act_score, new_state[1])
                 ))
 
-class ShiftReduceDecoder(torch.nn.Module):
+class LSTMShiftReduceDecoder(torch.nn.Module):
     def __init__(self, **config):
         super().__init__()
         self.config = config
