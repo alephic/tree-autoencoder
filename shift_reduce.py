@@ -111,6 +111,7 @@ class Decoder(torch.nn.Module):
 
     def forward(self, input_encoding, buffer_length=None, fixed_actions=None):
         # input_encoding : (batch_size=1, enc_size)
+        # Decoder fixed actions are time-reversed encoder actions
         buffer_slices = []
         stack = [input_encoding]
         action_record = []
