@@ -126,8 +126,6 @@ class Decoder(torch.nn.Module):
                     force = 0 # force unshift
             if force is None and fixed_actions is not None:
                 force = fixed_actions[len(action_record)]
-            # state_stack[-1][0] = h : (num_layers, batch_size=1, lstm_size)
-            # state_stack[-1][0][-1] : (batch_size=1, lstm_size)
             act_logits = self.act_scorer(stack[-1]) # (batch_size=1, 2)
             act_idx, act_score = decide(act_logits, force=force)
             action_record.append(act_idx)
@@ -136,12 +134,12 @@ class Decoder(torch.nn.Module):
                 unshifted = stack.pop() # (batch_size=1, enc_size)
                 buffer_slices.append(straight_through(act_score, unshifted))
                 if len(stack) == 0:
-                    # torch.stack(buffer_slices, 1) -> (batch_size=1, buffer_size, enc_size)
+                    # torch.stack(buffer_slices, 1) -> (batch_size=1, len(buffer_slices), enc_size)
                     # torch.stack(action_logit_record, 1) -> (batch_size=1, len(action_record), 2)
                     return torch.stack(buffer_slices, 1), action_record, torch.stack(action_logit_record, 1)
             elif act_idx == 1: # unreduce
                 prev_enc = stack.pop() # (batch_size=1, enc_size)
                 unreduced_l = self.unreduce_l(prev_enc) # (batch_size=1, enc_size)
                 unreduced_r = self.unreduce_r(prev_enc) # (batch_size=1, enc_size)
-                stack.append(straight_through(act_score, unreduced_l))
                 stack.append(straight_through(act_score, unreduced_r))
+                stack.append(straight_through(act_score, unreduced_l))
