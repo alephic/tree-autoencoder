@@ -2,6 +2,7 @@
 import torch
 from torch.autograd import Variable
 from nn_util import ResLayer, straight_through, decide
+from tree_util import *
 
 class Encoder(torch.nn.Module):
     def __init__(self, **config):

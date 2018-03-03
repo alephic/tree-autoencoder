@@ -1,0 +1,12 @@
+
+SENTENCE-LEVEL FENCING:
+    when next buffer token is <eos>, force reduce until |s| = 1, then step sentence-level model to provide next sentence-level
+
+NO FENCING:
+    provide some sort of incentive to reduce shifts/increase reduces, roughly proportional to log |s|
+
+every reduce:
+    zl, zr -> zp
+    zl -> ~zp
+    ~zp -> ~A, ~X
+    minimize ~A <> A, ~X <> X
