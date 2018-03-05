@@ -17,5 +17,4 @@ while training:
         where S is the height of the tree produced by reducing the whole stack and n is the number of shifted items
             not directly differentiable - create output gradient using stepwise difference in loss
             works (hopefully) since stack is temporally consistent
-            potentially use encoder loss to guide policy directly? RL techniques
     backprop
