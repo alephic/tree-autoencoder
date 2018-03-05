@@ -1,6 +1,6 @@
 
 SENTENCE-LEVEL FENCING:
-    when next buffer token is <eos>, force reduce until |s| = 1, then step sentence-level model to provide next sentence-level
+    when next buffer token is <eos>, force reduce until |s| = 1, then step sentence-level model to predict next sentence-level repr
 
 while training:
     encoder step
@@ -13,8 +13,9 @@ while training:
             ~zp -> ~A, ~X
             decoder loss: xent(~A, Ap) + xent(~X, Xp)
                 backprop back into encoder as well
-        encoder loss: abs(max(|S|, max(height(t) for t in S)) - log_2(n))
-        where S is the stack and n is the total number of shifted items
+        encoder loss: abs(S - log_2(n))
+        where S is the height of the tree produced by reducing the whole stack and n is the number of shifted items
             not directly differentiable - create output gradient using stepwise difference in loss
             works (hopefully) since stack is temporally consistent
+            potentially use encoder loss to guide policy directly? RL techniques
     backprop
