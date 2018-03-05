@@ -3,18 +3,18 @@ SENTENCE-LEVEL FENCING:
     when next buffer token is <eos>, force reduce until |s| = 1, then step sentence-level model to provide next sentence-level
 
 NO FENCING:
-    provide some sort of incentive to reduce shifts/increase reduces, roughly proportional to log |s|
+    loss criterion includes abs(|S| - log_2(|B|))
 
 while training:
     encoder step
         if shift:
             get buffer item, add to stack
-            minimize |S| - log_2(|B|)
+            loss: abs(|S| - log_2(|B|))
         if reduce:
             pop 2 stack items (zl[A1, X1], zr[A2, X2])
             zl, zr -> zp[Ap=A1:A2:1, Xp=X1:X2] (reduce)
             zl -> ~zp (predict)
             ~zp -> ~A, ~X
-            minimize xent(~A, Ap) + xent(~X, Xp) + |S| - log_2(|B|)
-        figure out how to get |S| - log_2(|B|) differentiable
+            loss: xent(~A, Ap) + xent(~X, Xp) + abs(|S| - log_2(|B|))
+        differentiate abs(|s| - log_2(|B|)) w.r.t decision score?
     backprop
