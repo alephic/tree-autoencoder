@@ -18,9 +18,3 @@ while training:
             minimize xent(~A, Ap) + xent(~X, Xp) + |S| - log_2(|B|)
         figure out how to get |S| - log_2(|B|) differentiable
     backprop
-
-every reduce:
-    zl, zr -> zp
-    zl -> ~zp
-    ~zp -> ~A, ~X
-    minimize ~A <> A, ~X <> X
