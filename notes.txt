@@ -2,19 +2,19 @@
 SENTENCE-LEVEL FENCING:
     when next buffer token is <eos>, force reduce until |s| = 1, then step sentence-level model to provide next sentence-level
 
-NO FENCING:
-    loss criterion includes abs(|S| - log_2(|B|))
-
 while training:
     encoder step
         if shift:
             get buffer item, add to stack
-            loss: abs(|S| - log_2(|B|))
         if reduce:
             pop 2 stack items (zl[A1, X1], zr[A2, X2])
             zl, zr -> zp[Ap=A1:A2:1, Xp=X1:X2] (reduce)
             zl -> ~zp (predict)
             ~zp -> ~A, ~X
-            loss: xent(~A, Ap) + xent(~X, Xp) + abs(|S| - log_2(|B|))
-        differentiate abs(|s| - log_2(|B|)) w.r.t decision score?
+            decoder loss: xent(~A, Ap) + xent(~X, Xp)
+                backprop back into encoder as well
+        encoder loss: abs(max(|S|, max(height(t) for t in S)) - log_2(n))
+        where S is the stack and n is the total number of shifted items
+            not directly differentiable - create output gradient using stepwise difference in loss
+            works (hopefully) since stack is temporally consistent
     backprop
