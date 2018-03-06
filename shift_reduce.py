@@ -45,13 +45,10 @@ class Encoder(torch.nn.Module):
         return (self.h0.unsqueeze(1), self.c0.unsqueeze(1))
 
     def forward(self, stack, state_stack, buffer, action_record, action_logit_record, fixed_action=None):
-        # buffer : (batch_size=1, buffer_size, enc_size)
-        buffer_size = buffer.size(1)
-        # unsqueeze(1) -> (num_layers, batch_size=1, lstm_size)
         force = None
         if len(stack) < 2: # not enough stack to reduce
             force = 0 # force shift
-        if buffer_index == buffer_size: # not enough buffer to shift
+        if not buffer.has_next(): # not enough buffer to shift
             if force is None: # there's enough stack to reduce
                 force = 1 # force reduce
             else: # can't shift or reduce, we're done
@@ -67,8 +64,8 @@ class Encoder(torch.nn.Module):
         action_record.append(act_idx)
         action_logit_record.append(act_logits)
         if act_idx == 0: # shift
-            shifted = buffer[:, buffer_index] # (batch_size=1, enc_size)
-            buffer_index += 1
+            buffer_item = buffer.pop()
+            shifted = self.embed[buffer_item].unsqueeze(0) # (batch_size=1, enc_size)
             # shifted.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
             # state_stack[-1] = h, c : (num_layers, batch_size=1, lstm_size)
             _, new_state = self.lstm(shifted.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
