@@ -20,6 +20,7 @@ while training:
 
 TODO:
     write decoder loss
+        write encoding -> vocab dist. func
     write encoder loss
         write stack height metric
     write training routine
