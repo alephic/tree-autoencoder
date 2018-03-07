@@ -7,10 +7,9 @@ while training:
         if shift:
             get buffer item, add to stack
         if reduce:
-            pop 2 stack items (zl[A1, X1], zr[A2, X2])
+            pop zl, zr
             zl, zr -> zp[Ap=A1:A2:1, Xp=X1:X2] (reduce)
-            zl -> ~zp (predict)
-            ~zp -> ~A, ~X
+            zp -> ~A, ~X (decode)
             decoder loss: xent(~A, Ap) + xent(~X, Xp)
                 backprop back into encoder as well
         encoder loss: abs(S - log_2(n))
@@ -18,3 +17,10 @@ while training:
             not directly differentiable - create output gradient using stepwise difference in loss
             works (hopefully) since stack is temporally consistent
     backprop
+
+TODO:
+    write decoder loss
+    write encoder loss
+        write stack height metric
+    write training routine
+        write data input
