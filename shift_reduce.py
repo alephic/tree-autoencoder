@@ -44,15 +44,15 @@ class Encoder(torch.nn.Module):
     def get_init_state(self):
         return (self.h0.unsqueeze(1), self.c0.unsqueeze(1))
 
-    def forward(self, stack, state_stack, buffer, action_record, action_logit_record, fixed_action=None):
+    def forward(self, enc_stack, state_stack, input_stack, action_stack, buffer, fixed_action=None):
         force = None
-        if len(stack) < 2: # not enough stack to reduce
+        if len(enc_stack) < 2: # not enough enc_stack to reduce
             force = 0 # force shift
         if not buffer.has_next(): # not enough buffer to shift
-            if force is None: # there's enough stack to reduce
+            if force is None: # there's enough enc_stack to reduce
                 force = 1 # force reduce
             else: # can't shift or reduce, we're done
-                # stack[0] : (batch_size=1, enc_size)
+                # enc_stack[0] : (batch_size=1, enc_size)
                 # torch.stack(action_logit_record, 1) : (batch_size=1, len(action_record), 2)
                 return True
         if force is None and fixed_action is not None:
@@ -69,29 +69,39 @@ class Encoder(torch.nn.Module):
             # shifted.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
             # state_stack[-1] = h, c : (num_layers, batch_size=1, lstm_size)
             _, new_state = self.lstm(shifted.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
-            stack.append(straight_through(act_score, shifted))
+            enc_stack.append(straight_through(act_score, shifted))
             state_stack.append((
                 straight_through(act_score, new_state[0]),
                 straight_through(act_score, new_state[1])
             ))
+            input_stack.append([buffer_item])
+            action_stack.append([0])
         elif act_idx == 1: # reduce
-            prev_enc_r = stack.pop()
-            prev_state_r = state_stack.pop()
-            prev_enc_l = stack.pop()
-            prev_state_l = state_stack.pop()
-            reduced = self.reduce(
+            enc_r = enc_stack.pop()
+            state_r = state_stack.pop()
+            input_r = input_stack.pop()
+            actions_r = action_stack.pop()
+            enc_l = enc_stack.pop()
+            state_l = state_stack.pop()
+            input_l = input_stack.pop()
+            actions_l = action_stack.pop()
+            enc_reduced = self.reduce(
                 torch.cat((
-                    prev_enc_r, # (batch_size=1, enc_size)
-                    prev_enc_l
+                    enc_r, # (batch_size=1, enc_size)
+                    enc_l
                 ), 1) # (batch_size=1, 2*enc_size)
             ) # (batch_size=1, enc_size)
             # reduced.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
-            _, new_state = self.lstm(reduced.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
-            stack.append(straight_through(act_score, reduced))
+            _, new_state = self.lstm(enc_reduced.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
+            enc_stack.append(straight_through(act_score, enc_reduced))
             state_stack.append((
                 straight_through(act_score, new_state[0]),
                 straight_through(act_score, new_state[1])
             ))
+            input_stack.append(input_l + input_r)
+            actions_reduced = actions_l + actions_r
+            actions_reduced.append(1)
+            action_stack.append(actions_reduced)
         return False
 
 class Decoder(torch.nn.Module):
