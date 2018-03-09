@@ -159,3 +159,12 @@ class Decoder(torch.nn.Module):
                 unreduced_r = self.unreduce_r(prev_enc) # (batch_size=1, enc_size)
                 stack.append(straight_through(act_score, unreduced_r))
                 stack.append(straight_through(act_score, unreduced_l))
+
+def deembed_l2(encodings, embed):
+    # embed : (num_vocab_items, enc_size)
+    # encodings: (batch_size, len(buffer_slices), enc_size)
+    # embed - encodings.unsqueeze(2) : (batch_size, len(buffer_slices), num_vocab_items, enc_size)
+    return torch.sum((embed - encodings.unsqueeze(2)) ** 2, 3).sqrt() # : (batch_size, len(buffer_slices), num_vocab_items)
+
+def deembed_dot(encodings, embed):
+    return torch.sum((embed * encodings.unsqueeze(2)), 3)
