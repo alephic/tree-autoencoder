@@ -19,7 +19,6 @@ while training:
     backprop
 
 TODO:
-    write decoder loss
     write encoder loss
         write stack height metric
     write training routine

@@ -24,12 +24,12 @@ def straight_through(score, x):
     return StraightThrough()(score, x)
 
 def decide(logits, force=None):
-    scores = torch.nn.functional.softmax(logits, dim=1)
+    scores = torch.nn.functional.softmax(logits, dim=0)
     if force is not None:
-        return force, scores[0, force]
+        return force, scores[force]
     else:
-        idx = torch.multinomial(scores, 1, replacement=True).data[0, 0]
-        return idx, scores[0, idx]
+        idx = torch.multinomial(scores, 1, replacement=True).data[0]
+        return idx, scores[idx]
 
 def distribute(module, *inputs):  # pylint: disable=arguments-differ
     reshaped_inputs = []

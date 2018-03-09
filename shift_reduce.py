@@ -52,23 +52,23 @@ class Encoder(torch.nn.Module):
             if force is None: # there's enough enc_stack to reduce
                 force = 1 # force reduce
             else: # can't shift or reduce, we're done
-                # enc_stack[0] : (batch_size=1, enc_size)
-                # torch.stack(action_logit_record, 1) : (batch_size=1, len(action_record), 2)
+                # enc_stack[0] : (enc_size)
+                # torch.stack(action_logit_record, 1) : (len(action_record), 2)
                 return True
         if force is None and fixed_action is not None:
             force = fixed_action
         # state_stack[-1][0] = h : (num_layers, batch_size=1, lstm_size)
         # state_stack[-1][0][-1] : (batch_size=1, lstm_size)
-        act_logits = self.act_scorer(state_stack[-1][0][-1]) # (batch_size=1, 2)
+        act_logits = self.act_scorer(state_stack[-1][0][-1]).squeeze(0) # (2)
         act_idx, act_score = decide(act_logits, force=force)
         action_record.append(act_idx)
         action_logit_record.append(act_logits)
         if act_idx == 0: # shift
             buffer_item = buffer.pop()
-            shifted = self.embed[buffer_item].unsqueeze(0) # (batch_size=1, enc_size)
-            # shifted.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
+            shifted = self.embed[buffer_item] # (enc_size)
+            # shifted.unsqueeze(0).unsqueeze(0) : (batch_size=1, seq_length=1, enc_size)
             # state_stack[-1] = h, c : (num_layers, batch_size=1, lstm_size)
-            _, new_state = self.lstm(shifted.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
+            _, new_state = self.lstm(shifted.unsqueeze(0).unsqueeze(0), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
             enc_stack.append(straight_through(act_score, shifted))
             state_stack.append((
                 straight_through(act_score, new_state[0]),
@@ -87,13 +87,13 @@ class Encoder(torch.nn.Module):
             actions_l = action_stack.pop()
             enc_reduced = self.reduce(
                 torch.cat((
-                    enc_r, # (batch_size=1, enc_size)
+                    enc_r, # (enc_size)
                     enc_l
-                ), 1) # (batch_size=1, 2*enc_size)
-            ) # (batch_size=1, enc_size)
-            # reduced.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
+                ), 0).unsqueeze(0) # (N=1, 2*enc_size)
+            ) # (N=1, enc_size)
+            # enc_reduced.unsqueeze(1) : (batch_size=1, seq_length=1, enc_size)
             _, new_state = self.lstm(enc_reduced.unsqueeze(1), state_stack[-1]) # new_state = h, c : (num_layers, batch_size=1, lstm_size)
-            enc_stack.append(straight_through(act_score, enc_reduced))
+            enc_stack.append(straight_through(act_score, enc_reduced.squeeze(0)))
             state_stack.append((
                 straight_through(act_score, new_state[0]),
                 straight_through(act_score, new_state[1])
@@ -128,43 +128,52 @@ class Decoder(torch.nn.Module):
         # input_encoding : (batch_size=1, enc_size)
         # Decoder fixed actions are time-reversed encoder actions
         buffer_slices = []
-        stack = [input_encoding]
+        enc_stack = [input_encoding]
         action_record = []
         action_logit_record = []
         while True:
             force = None
             if buffer_length is not None:
-                if len(stack) == 1 and len(buffer_slices) + 1 < buffer_length:
+                if len(enc_stack) == 1 and len(buffer_slices) + 1 < buffer_length:
                     # unshifting the last remaning token would result in too small of a buffer
                     force = 1 # force unreduce
-                elif len(stack) + len(buffer_slices) == buffer_length:
+                elif len(enc_stack) + len(buffer_slices) == buffer_length:
                     # unreducing any more would generate too large of a buffer
                     force = 0 # force unshift
             if force is None and fixed_actions is not None:
                 force = fixed_actions[len(action_record)]
-            act_logits = self.act_scorer(stack[-1]) # (batch_size=1, 2)
+            act_logits = self.act_scorer(enc_stack[-1].unsqueeze(0)).squeeze(0) # (2)
             act_idx, act_score = decide(act_logits, force=force)
             action_record.append(act_idx)
             action_logit_record.append(act_logits)
             if act_idx == 0: # unshift
-                unshifted = stack.pop() # (batch_size=1, enc_size)
+                unshifted = enc_stack.pop() # (enc_size)
                 buffer_slices.append(straight_through(act_score, unshifted))
                 if len(stack) == 0:
-                    # torch.stack(buffer_slices, 1) -> (batch_size=1, len(buffer_slices), enc_size)
-                    # torch.stack(action_logit_record, 1) -> (batch_size=1, len(action_record), 2)
-                    return torch.stack(buffer_slices, 1), action_record, torch.stack(action_logit_record, 1)
+                    # torch.stack(buffer_slices, 0) -> (len(buffer_slices), enc_size)
+                    # torch.stack(action_logit_record, 0) -> (len(action_record), num_actions)
+                    return torch.stack(buffer_slices, 0), action_record, torch.stack(action_logit_record, 0)
             elif act_idx == 1: # unreduce
-                prev_enc = stack.pop() # (batch_size=1, enc_size)
-                unreduced_l = self.unreduce_l(prev_enc) # (batch_size=1, enc_size)
-                unreduced_r = self.unreduce_r(prev_enc) # (batch_size=1, enc_size)
-                stack.append(straight_through(act_score, unreduced_r))
-                stack.append(straight_through(act_score, unreduced_l))
+                prev_enc = enc_stack.pop() # (batch_size=1, enc_size)
+                unreduced_l = self.unreduce_l(prev_enc.unsqueeze(0)).squeeze(0) # (enc_size)
+                unreduced_r = self.unreduce_r(prev_enc.unsqueeze(0)).squeeze(0) # (enc_size)
+                enc_stack.append(straight_through(act_score, unreduced_r))
+                enc_stack.append(straight_through(act_score, unreduced_l))
 
 def deembed_l2(encodings, embed):
     # embed : (num_vocab_items, enc_size)
-    # encodings: (batch_size, len(buffer_slices), enc_size)
-    # embed - encodings.unsqueeze(2) : (batch_size, len(buffer_slices), num_vocab_items, enc_size)
-    return torch.sum((embed - encodings.unsqueeze(2)) ** 2, 3).sqrt() # : (batch_size, len(buffer_slices), num_vocab_items)
+    # encodings: (len(buffer_slices), enc_size)
+    # embed - encodings.unsqueeze(2) : (len(buffer_slices), num_vocab_items, enc_size)
+    return torch.sum((embed - encodings.unsqueeze(1)) ** 2, 2).sqrt() # : (len(buffer_slices), num_vocab_items)
 
 def deembed_dot(encodings, embed):
-    return torch.sum((embed * encodings.unsqueeze(2)), 3)
+    return torch.sum((embed * encodings.unsqueeze(1)), 2)
+
+def decoder_loss(decoded_input_logits, gold_inputs, decoded_action_logits, gold_actions):
+    # decoded_input_logits : (buffer_len, num_vocab_items)
+    # gold_inputs: (buffer_len)
+    # decoded_action_logits : (action_record_len, num_actions)
+    # gold_actions: (action_record_len)
+    input_loss = torch.nn.functional.cross_entropy(decoded_input_logits, gold_inputs)
+    action_loss = torch.nn.functional.cross_entropy(decoded_action_logits, gold_actions)
+    return input_loss + action_loss
