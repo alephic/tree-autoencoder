@@ -177,3 +177,14 @@ def decoder_loss(decoded_input_logits, gold_inputs, decoded_action_logits, gold_
     input_loss = torch.nn.functional.cross_entropy(decoded_input_logits, gold_inputs)
     action_loss = torch.nn.functional.cross_entropy(decoded_action_logits, gold_actions)
     return input_loss + action_loss
+
+class TreeLanguageModel(torch.nn.Module):
+    def __init__(self, **config):
+        self.encoder = Encoder(**config)
+        self.decoder = Decoder(**config)
+        enc_size = config.get('enc_size', 256)
+        self.predictor = torch.nn.Sequential(
+            ResLayer(enc_size),
+            ResLayer(enc_size)
+        )
+        # WHAT DOES PREDICTOR DO????????????
